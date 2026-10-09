@@ -6,17 +6,17 @@ import com.golfgod.core.model.SwingPhase
 import kotlin.math.abs
 
 data class LiveVisionTelemetry(
-    val processedFps: Float,
-    val motionEnergyPct: Float, // 0.0 to 100.0%
-    val isMotionDetected: Boolean,
-    val detectedSpineAngleDeg: Float,
-    val pelvisDriftInches: Float,
-    val headSwayInches: Float,
-    val swingPhase: SwingPhase,
-    val averageLuminance: Float,
-    val frameCount: Long,
-    val upperBodyMotionPct: Float,
-    val lowerBodyMotionPct: Float
+    val processedFps: Float = 0f,
+    val motionEnergyPct: Float = 0f, // 0.0 to 100.0%
+    val isMotionDetected: Boolean = false,
+    val detectedSpineAngleDeg: Float = 38.0f,
+    val pelvisDriftInches: Float = 0.5f,
+    val headSwayInches: Float = 0.3f,
+    val swingPhase: SwingPhase = SwingPhase.ADDRESS,
+    val averageLuminance: Float = 128f,
+    val frameCount: Long = 0L,
+    val upperBodyMotionPct: Float = 50f,
+    val lowerBodyMotionPct: Float = 50f
 )
 
 /**
