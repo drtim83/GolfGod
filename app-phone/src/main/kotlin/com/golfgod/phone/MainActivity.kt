@@ -454,10 +454,13 @@ fun MetricColumn(title: String, value: String, subtitle: String, color: Color) {
 fun CameraPreviewView(
     modifier: Modifier = Modifier,
     lensFacing: Int = CameraSelector.LENS_FACING_BACK,
-    isTorchOn: Boolean = false
+    isTorchOn: Boolean = false,
+    onVisionTelemetry: (LiveVisionTelemetry) -> Unit = {},
+    onAutoSwingDetected: (peakMotion: Float, spineDelta: Float, pelvisDrift: Float) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val cameraExecutor = remember { java.util.concurrent.Executors.newSingleThreadExecutor() }
 
     AndroidView(
         factory = { ctx ->
@@ -475,6 +478,26 @@ fun CameraPreviewView(
                     val preview = Preview.Builder().build().also {
                         it.setSurfaceProvider(view.surfaceProvider)
                     }
+
+                    val imageAnalysis = androidx.camera.core.ImageAnalysis.Builder()
+                        .setBackpressureStrategy(androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setOutputImageFormat(androidx.camera.core.ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                        .build()
+
+                    val visionAnalyzer = SwingVisionAnalyzer(
+                        onTelemetry = { telemetry ->
+                            ContextCompat.getMainExecutor(context).execute {
+                                onVisionTelemetry(telemetry)
+                            }
+                        },
+                        onSwingImpactDetected = { peak, spine, pelvis ->
+                            ContextCompat.getMainExecutor(context).execute {
+                                onAutoSwingDetected(peak, spine, pelvis)
+                            }
+                        }
+                    )
+                    imageAnalysis.setAnalyzer(cameraExecutor, visionAnalyzer)
+
                     val cameraSelector = CameraSelector.Builder()
                         .requireLensFacing(lensFacing)
                         .build()
@@ -483,7 +506,8 @@ fun CameraPreviewView(
                     val camera = cameraProvider.bindToLifecycle(
                         lifecycleOwner,
                         cameraSelector,
-                        preview
+                        preview,
+                        imageAnalysis
                     )
                     if (camera.cameraInfo.hasFlashUnit()) {
                         camera.cameraControl.enableTorch(isTorchOn)
@@ -657,6 +681,23 @@ fun VideoCoachScreen(
     var clubShaftP6Angle by remember { mutableStateOf(48) }
     var coachGrade by remember { mutableStateOf("B+") }
     var frameCaptureCount by remember { mutableStateOf(57) }
+    var visionTelemetry by remember {
+        mutableStateOf(
+            LiveVisionTelemetry(
+                processedFps = 0f,
+                motionEnergyPct = 0f,
+                isMotionDetected = false,
+                detectedSpineAngleDeg = 38.0f,
+                pelvisDriftInches = 0.5f,
+                headSwayInches = 0.3f,
+                swingPhase = SwingPhase.ADDRESS,
+                averageLuminance = 128f,
+                frameCount = 0L,
+                upperBodyMotionPct = 50f,
+                lowerBodyMotionPct = 50f
+            )
+        )
+    }
 
     // Swing Capture Function (Phone Camera + Smartwatch Trigger)
     fun triggerSwingCapture(triggeredByWatch: Boolean) {
@@ -802,7 +843,22 @@ fun VideoCoachScreen(
                                 CameraPreviewView(
                                     modifier = Modifier.fillMaxSize(),
                                     lensFacing = lensFacing,
-                                    isTorchOn = isTorchOn
+                                    isTorchOn = isTorchOn,
+                                    onVisionTelemetry = { telemetry ->
+                                        visionTelemetry = telemetry
+                                        if (!isRecording) {
+                                            analysisStatus = "LIVE CV · ${telemetry.swingPhase.name} · ${telemetry.detectedSpineAngleDeg}°"
+                                        }
+                                    },
+                                    onAutoSwingDetected = { peakMotion, spineDelta, pelvisDrift ->
+                                        earlyExtensionInches = pelvisDrift
+                                        spineAngleSetup = 38
+                                        spineAngleImpact = (38 - spineDelta).toInt()
+                                        coachGrade = if (pelvisDrift <= 1.8f) "A" else "B+"
+                                        val simRecord = simulateNewSwing(selectedClub, handedness)
+                                        onSwingAnalyzed(simRecord)
+                                        analysisStatus = "✓ AUTO-CAPTURED SWING! (${simRecord.estimatedClubSpeedMph.toInt()} MPH · GRADE: $coachGrade)"
+                                    }
                                 )
                             } else {
                                 // Simulated Viewfinder Backdrop
@@ -943,6 +999,33 @@ fun VideoCoachScreen(
                                         fontSize = 11.sp,
                                         color = TextSecondary
                                     )
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "📹 CV SENSOR: ${visionTelemetry.processedFps.toInt()} FPS · Motion ${visionTelemetry.motionEnergyPct.toInt()}% · Spine ${visionTelemetry.detectedSpineAngleDeg}°",
+                                        fontSize = 9.sp,
+                                        color = if (visionTelemetry.isMotionDetected) GolfGreen else Color.Gray,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .width(60.dp)
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(Color(0x44FFFFFF))
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .fillMaxWidth(fraction = (visionTelemetry.motionEnergyPct / 100f).coerceIn(0f, 1f))
+                                                .background(if (visionTelemetry.motionEnergyPct > 40f) Color.Red else GolfGreen)
+                                        )
+                                    }
                                 }
                             }
                         }
